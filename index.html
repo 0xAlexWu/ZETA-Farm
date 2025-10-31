@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>秋日小农场 · 单文件原型</title>
+    <!-- Tailwind via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 UMD -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel Standalone for JSX in-browser transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      html, body, #root { height: 100%; }
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="env,react">
+      // 使 React 的 Hooks 可用（无需 import）
+      const { useEffect, useMemo, useState } = React;
+
+/**
+ * 更新说明（2025-10-31）：
+ * - 作物扩充到 18 种，并保持高级作物效益递增；同步背包与商店自动适配；
+ * - 新增「🎰 Gluck 抽奖」二级弹窗，可消耗奖券抽取奖励；
+ * - 视觉重制（田园·秋色）：
+ *   - 背景为动态秋景：天空渐变 + 缓慢移动的云 + 飘落树叶；
+ *   - 地块卡片换为更真实的「黄土地」质感（棕土配色 + 细微颗粒纹理），更柔和的圆角与阴影；
+ * - 工具箱改为与背包一致的「格子图标」设计（方形格子 + 悬浮提示）；
+ * - 其余玩法保持不变（需浇水一次、工具指针、商店三币种、测试配置等）。
+ */
+
+/**********************
+ * 基础常量与工具函数 *
+ **********************/
+const TICK_MS = 1000; // 1s 刷新一次
+
+// 阶段字面量
+const STAGE = { EMPTY: "EMPTY", SEED: "SEED", SPROUT: "SPROUT", GROWING: "GROWING", RIPE: "RIPE", WITHER: "WITHER" };
+
+// 18 种作物（时间单位：秒）——成本/售价/经验/时间逐级递增
+const SEEDS = {
+  // 低级作物：快速成熟（30秒-8分钟）
+  radish:     { id: "radish",     name: "白萝卜",  cost: 2,   sell: 5,    exp: 2,   stages: [10, 20, 30],    witherAfter: 60,   emoji: "🥕", levelReq: 1 },      // 30秒成熟，枯萎1分钟
+  strawberry: { id: "strawberry", name: "草莓",    cost: 6,   sell: 14,   exp: 5,   stages: [20, 40, 60],    witherAfter: 120,  emoji: "🍓", levelReq: 2 },      // 1分钟成熟，枯萎2分钟
+  corn:       { id: "corn",       name: "玉米",    cost: 10,  sell: 26,   exp: 9,   stages: [40, 80, 120],   witherAfter: 180,  emoji: "🌽", levelReq: 3 },      // 2分钟成熟，枯萎3分钟
+  grape:      { id: "grape",      name: "葡萄",    cost: 18,  sell: 50,   exp: 16,  stages: [80, 160, 240],  witherAfter: 300,  emoji: "🍇", levelReq: 4 },      // 4分钟成熟，枯萎5分钟
+  tomato:     { id: "tomato",     name: "番茄",    cost: 22,  sell: 64,   exp: 20,  stages: [160, 320, 480], witherAfter: 480,  emoji: "🍅", levelReq: 5 },      // 8分钟成熟，枯萎8分钟
+  // 中级作物：中等成熟（15分钟-2小时）
+  blueberry:  { id: "blueberry",  name: "蓝莓",    cost: 30,  sell: 90,   exp: 28,  stages: [300, 600, 900],  witherAfter: 600,  emoji: "🫐", levelReq: 6 },      // 15分钟成熟，枯萎10分钟
+  pumpkin:    { id: "pumpkin",    name: "南瓜",    cost: 42,  sell: 128,  exp: 36,  stages: [600, 1200, 1800], witherAfter: 900,  emoji: "🎃", levelReq: 7 },      // 30分钟成熟，枯萎15分钟
+  pineapple:  { id: "pineapple",  name: "菠萝",    cost: 58,  sell: 178,  exp: 48,  stages: [1200, 2400, 3600], witherAfter: 1200, emoji: "🍍", levelReq: 8 },      // 1小时成熟，枯萎20分钟
+  coffee:     { id: "coffee",     name: "咖啡豆",  cost: 80,  sell: 250,  exp: 65,  stages: [2400, 4800, 7200], witherAfter: 1800, emoji: "☕", levelReq: 9 },      // 2小时成熟，枯萎30分钟
+  // 高级作物：较长成熟（4小时-12小时）
+  cocoa:      { id: "cocoa",      name: "可可豆",  cost: 110, sell: 360,  exp: 90,  stages: [4800, 9600, 14400], witherAfter: 2400, emoji: "🍫", levelReq: 10 },     // 4小时成熟，枯萎40分钟
+  tea:        { id: "tea",        name: "茶叶",    cost: 140, sell: 460,  exp: 110, stages: [7200, 14400, 21600], witherAfter: 2700, emoji: "🍵", levelReq: 11 },     // 6小时成熟，枯萎45分钟
+  chili:      { id: "chili",      name: "辣椒",    cost: 160, sell: 520,  exp: 125, stages: [9600, 19200, 28800], witherAfter: 3000, emoji: "🌶️", levelReq: 12 },     // 8小时成熟，枯萎50分钟
+  rice:       { id: "rice",       name: "水稻",    cost: 190, sell: 600,  exp: 140, stages: [14400, 28800, 43200], witherAfter: 3300, emoji: "🍚", levelReq: 13 },     // 12小时成熟，枯萎55分钟
+  // 顶级作物：超长成熟（16小时-72小时）
+  wheat:      { id: "wheat",      name: "小麦",    cost: 220, sell: 690,  exp: 160, stages: [19200, 38400, 57600], witherAfter: 3480, emoji: "🌾", levelReq: 14 },     // 16小时成熟，枯萎58分钟
+  peach:      { id: "peach",      name: "桃子",    cost: 260, sell: 820,  exp: 190, stages: [21600, 43200, 86400], witherAfter: 3540, emoji: "🍑", levelReq: 15 },     // 24小时成熟，枯萎59分钟
+  pear:       { id: "pear",       name: "梨子",    cost: 300, sell: 960,  exp: 220, stages: [43200, 86400, 129600], witherAfter: 3570, emoji: "🍐", levelReq: 16 },     // 36小时成熟，枯萎59.5分钟
+  mango:      { id: "mango",      name: "芒果",    cost: 360, sell: 1150, exp: 260, stages: [57600, 115200, 172800], witherAfter: 3590, emoji: "🥭", levelReq: 17 },     // 48小时成熟，枯萎59.8分钟
+  cherry:     { id: "cherry",     name: "樱桃",    cost: 420, sell: 1350, exp: 300, stages: [86400, 172800, 259200], witherAfter: 3600, emoji: "🍒", levelReq: 18 },     // 72小时成熟，枯萎60分钟
+};
+
+// 扩展等级到 18 级（经验阈值可再按需微调）
+const LEVELS = [
+  0, 30, 120, 300, 600, 1200, 2400, 4200, 6600, 9600,
+  13200, 16800, 20400, 24600, 29400, 34800, 40800, 47400
+];
+
+function getLevel(exp) {
+  let lvl = 1;
+  for (let i = 0; i < LEVELS.length; i++) if (exp >= LEVELS[i]) lvl = i + 1;
+  return Math.min(lvl, LEVELS.length);
+}
+
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function now() { return Math.floor(Date.now() / 1000); }
+function fmtTime(sec) {
+  if (sec <= 0) return "0秒";
+  const m = Math.floor(sec / 60); const s = sec % 60;
+  if (m > 0 && s > 0) return `${m}分${s}秒`;
+  if (m > 0) return `${m}分`;
+  return `${s}秒`;
+}
+
+// 鼠标指针（简单 SVG DataURL）
+function cursorForTool(tool) {
+  const map = { plant: "🌱", harvest: "🧺", water: "💧", weed: "🌿", pesticide: "🪲", shovel: "🪓" };
+  const emoji = map[tool] || "";
+  if (!emoji) return "auto";
+  const svg = encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><text x='0' y='24' font-size='24'>${emoji}</text></svg>`);
+  return `url("data:image/svg+xml;utf8,${svg}") 4 24, auto`;
+}
+
+// 更逼真的黄土地纹理样式（渐变 + 细点噪声）
+function soilTextureStyle() {
+  const baseGrad = `linear-gradient(to bottom, #d1a672, #c7924f)`; // 棕黄到土黄
+  const noise1 = `radial-gradient(1px 1px at 10px 10px, rgba(80,50,20,0.08) 1px, transparent 1px)`;
+  const noise2 = `radial-gradient(1px 1px at 20px 18px, rgba(80,50,20,0.06) 1px, transparent 1px)`;
+  const noise3 = `radial-gradient(1px 1px at 15px 25px, rgba(80,50,20,0.05) 1px, transparent 1px)`;
+  return {
+    backgroundImage: `${baseGrad}, ${noise1}, ${noise2}, ${noise3}`,
+    backgroundSize: `100% 100%, 22px 22px, 28px 28px, 26px 26px`,
+    backgroundBlendMode: 'multiply',
+    borderColor: '#b07a3d',
+  };
+}
+
+/**********************
+ * 存档与默认状态      *
+ **********************/
+// 获取今天的日期字符串（YYYY-MM-DD）
+function getTodayDateStr() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+const DEFAULT_SAVE = {
+  coins: 10,      // 初始只有10金币
+  zeta: 0,        // 初始没有ZETA
+  tickets: 1,     // 初始有1张奖券
+  exp: 0,         // 初始经验值为0，等级1
+  protectFreeUsed: false,  // 今天是否已使用免费保护
+  protectBoughtToday: 0,   // 今天购买保护的次数
+  protectLastDate: getTodayDateStr(), // 最后使用保护的日期
+  plots: Array.from({ length: 18 }).map((_, i) => ({
+    id: i,
+    unlocked: i === 0,  // 只有第一块地默认解锁
+    seedId: null,
+    plantedAt: null,
+    fertilized: false,
+    wateredAt: null,
+    weeds: false,
+    pests: false,
+    waterRequirements: [],  // 浇水需求时间点数组 [{time: seconds, done: false}]
+    weedRequirements: [],   // 除草需求时间点数组 [{time: seconds, done: false}]
+    pausedDuration: 0,      // 累计暂停生长的时间（秒）
+    protectedUntil: 0,
+  })),
+  // 初始背包：3个胡萝卜种子
+  inventory: { radish: 3 },
+  fruits: {}, // 初始没有果实库存
+  selectedSeed: null,
+  tool: "harvest",
+  lastLogin: now(),
+  __testingBoostApplied: false,
+};
+
+/**********************
+ * 游戏逻辑核心        *
+ **********************/
+function stageOf(plot) {
+  if (!plot.seedId || !plot.plantedAt) return STAGE.EMPTY;
+  const seed = SEEDS[plot.seedId];
+  // 实际生长时间 = 总时间 - 暂停时间
+  const elapsed = (now() - plot.plantedAt) - (plot.pausedDuration || 0);
+  const [s1, s2, s3] = seed.stages;
+  const aliveUntil = s3 + seed.witherAfter;
+  if (elapsed < s1) return STAGE.SEED;
+  if (elapsed < s2) return STAGE.SPROUT;
+  if (elapsed < s3) return STAGE.GROWING;
+  if (elapsed < aliveUntil) return STAGE.RIPE;
+  return STAGE.WITHER;
+}
+
+function yieldAmount(plot) {
+  // 种植和收获是1:1，种1个得1个
+  if (!plot.seedId || !plot.plantedAt) return 0;
+  return 1;
+}
+
+function timeToNextStage(plot) {
+  if (!plot.seedId || !plot.plantedAt) return 0;
+  const seed = SEEDS[plot.seedId];
+  // 实际生长时间 = 总时间 - 暂停时间
+  const elapsed = (now() - plot.plantedAt) - (plot.pausedDuration || 0);
+  const [s1, s2, s3] = seed.stages;
+  if (elapsed < s1) return s1 - elapsed;
+  if (elapsed < s2) return s2 - elapsed;
+  if (elapsed < s3) return s3 - elapsed;
+  const aliveUntil = s3 + seed.witherAfter;
+  if (elapsed < aliveUntil) return aliveUntil - elapsed; // 距离枯萎
+  return 0;
+}
+
+// 根据作物等级获取浇水次数和除草次数
+function getWateringCount(levelReq) {
+  // 按照表格：1-3级:1次, 4-6级:2次, 7-9级:3次, 10-12级:4次, 13级:4次, 14-15级:5次, 16-18级:5次
+  if (levelReq <= 3) return 1;
+  if (levelReq <= 6) return 2;
+  if (levelReq <= 9) return 3;
+  if (levelReq <= 12) return 4;
+  if (levelReq === 13) return 4;
+  if (levelReq <= 15) return 5;
+  return 5; // 16-18
+}
+
+function getWeedingCount(levelReq) {
+  // 按照表格：1-3级:0次, 4-6级:1次, 7-9级:2次, 10-12级:3次, 13级:4次, 14-15级:4次, 16-18级:5次
+  if (levelReq <= 3) return 0;
+  if (levelReq <= 6) return 1;
+  if (levelReq <= 9) return 2;
+  if (levelReq <= 12) return 3;
+  if (levelReq === 13) return 4;
+  if (levelReq <= 15) return 4;
+  if (levelReq <= 18) return 5;
+  return 5;
+}
+
+// 计算开垦土地的价格（根据土地序号，价格递增）
+function getPlotUnlockCost(plotId) {
+  // 第一块地免费，后续土地价格递增
+  // 基于作物平均收益来计算：假设每块土地平均收益递增
+  // 1-3块：50, 100, 150
+  // 4-6块：250, 400, 600
+  // 7-9块：1000, 1500, 2200
+  // 10-12块：3200, 4500, 6000
+  // 13-15块：8000, 11000, 15000
+  // 16-18块：20000, 28000, 40000
+  const costs = [
+    0,     // 第0块免费
+    50,    // 第1块
+    100,   // 第2块
+    150,   // 第3块
+    250,   // 第4块
+    400,   // 第5块
+    600,   // 第6块
+    1000,  // 第7块
+    1500,  // 第8块
+    2200,  // 第9块
+    3200,  // 第10块
+    4500,  // 第11块
+    6000,  // 第12块
+    8000,  // 第13块
+    11000, // 第14块
+    15000, // 第15块
+    20000, // 第16块
+    28000, // 第17块
+    40000, // 第18块
+  ];
+  return costs[plotId] || 50000;
+}
+
+// 计算开垦土地所需的等级（根据土地序号，等级递增）
+function getPlotUnlockLevel(plotId) {
+  // 第0块免费无等级要求
+  // 后续土地每3块提升1级，最高18级
+  if (plotId === 0) return 1;
+  if (plotId <= 3) return 2;
+  if (plotId <= 6) return 4;
+  if (plotId <= 9) return 6;
+  if (plotId <= 12) return 9;
+  if (plotId <= 15) return 12;
+  return 15; // 16-18块需要15级
+}
+
+function randomChance(prob) { return Math.random() < prob; }
+function replacePlot(arr, plot) { return arr.map((p) => (p.id === plot.id ? plot : p)); }
+
+/**********************
+ * 主组件              *
+ **********************/
+function SocialFarmGame() {
+  const [save, setSave] = useState(() => {
+    const raw = localStorage.getItem("social-farm-save-v1");
+    if (raw) { try { return JSON.parse(raw); } catch (e) { console.warn("Load save failed", e); } }
+    return { ...DEFAULT_SAVE };
+  });
+
+  const lvl = useMemo(() => getLevel(save.exp), [save.exp]);
+
+  // 测试加成功能已移除，新用户使用DEFAULT_SAVE的默认值
+
+  // 自动保存
+  useEffect(() => { localStorage.setItem("social-farm-save-v1", JSON.stringify(save)); }, [save]);
+
+  // 每秒：检查浇水/除草需求并暂停生长，随机事件（害虫）
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSave((prev) => {
+        const next = { ...prev };
+        next.plots = prev.plots.map((p) => {
+          if (!p.seedId || !p.plantedAt) return p;
+          
+          // 计算实际生长时间（不包含暂停时间）
+          const actualElapsed = (now() - p.plantedAt) - (p.pausedDuration || 0);
+          let updated = false;
+          let hasActiveWaterReq = false;
+          let hasActiveWeedReq = false;
+          
+          // 检查浇水需求
+          for (let req of (p.waterRequirements || [])) {
+            if (!req.done && actualElapsed >= req.time) {
+              hasActiveWaterReq = true;
+              // 如果还没开始暂停，记录暂停开始时间
+              if (!p.pausedAt) {
+                p = { ...p, pausedAt: now() };
+                updated = true;
+              }
+            }
+          }
+          
+          // 检查除草需求
+          for (let req of (p.weedRequirements || [])) {
+            if (!req.done && actualElapsed >= req.time) {
+              hasActiveWeedReq = true;
+              // 如果还没开始暂停，记录暂停开始时间
+              if (!p.pausedAt) {
+                p = { ...p, pausedAt: now() };
+                updated = true;
+              }
+            }
+          }
+          
+          // 如果有未完成的需求，累计暂停时间
+          if (hasActiveWaterReq || hasActiveWeedReq) {
+            if (p.pausedAt) {
+              const pausedSince = now() - p.pausedAt;
+              p = { ...p, pausedDuration: (p.pausedDuration || 0) + 1 };
+              updated = true;
+            }
+          } else if (p.pausedAt) {
+            // 所有需求都完成了，清除暂停
+            p = { ...p, pausedAt: null };
+            updated = true;
+          }
+          
+          // 随机事件：害虫（不暂停生长）
+          const st = stageOf(p);
+          if (st === STAGE.RIPE || st === STAGE.GROWING) {
+            const pests = p.pests || randomChance(0.004);
+            return { ...p, pests };
+          }
+          
+          return p;
+        });
+        return next;
+      });
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // 工具/种子选择 + 指针
+  function setTool(t) { setSave((s) => ({ ...s, tool: t })); }
+  useEffect(() => {
+    const c = cursorForTool(save.tool);
+    const prev = document.body.style.cursor;
+    document.body.style.cursor = c;
+    return () => { document.body.style.cursor = prev; };
+  }, [save.tool]);
+
+  function selectSeed(id) { setSave((s) => ({ ...s, selectedSeed: id, tool: "plant" })); }
+
+  // 购买种子（只能用金币）
+  function buySeed(id, count = 1) {
+    const seed = SEEDS[id];
+    if (!seed) return toast("未知种子");
+    if (getLevel(save.exp) < seed.levelReq) return toast(`需要等级 ${seed.levelReq}`);
+    const cost = seed.cost * count;
+    if (save.coins < cost) return toast("金币不足");
+    setSave((s) => ({
+      ...s,
+      coins: s.coins - cost,
+      inventory: { ...s.inventory, [id]: (s.inventory[id] || 0) + count },
+    }));
+    toast(`购买 ${seed.name} ×${count}，消耗 ${cost} 金币`);
+  }
+
+  // 行为：播种/收获/等
+  function plant(plot) {
+    if (!plot.unlocked) return toast("请先开垦土地");
+    if (!save.selectedSeed) return toast("先在背包选择种子");
+    if (plot.seedId) return toast("地块已被占用");
+    const sid = save.selectedSeed;
+    if ((save.inventory[sid] || 0) <= 0) return toast("该种子库存不足");
+    const seed = SEEDS[sid];
+    const [s1, s2, s3] = seed.stages;
+    
+    // 生成浇水需求时间点（在生长过程中随机分布）
+    const waterCount = getWateringCount(seed.levelReq);
+    const waterRequirements = [];
+    for (let i = 0; i < waterCount; i++) {
+      const time = Math.floor(Math.random() * (s3 - s1)) + s1;
+      waterRequirements.push({ time, done: false });
+    }
+    waterRequirements.sort((a, b) => a.time - b.time); // 按时间排序
+    
+    // 生成除草需求时间点
+    const weedCount = getWeedingCount(seed.levelReq);
+    const weedRequirements = [];
+    for (let i = 0; i < weedCount; i++) {
+      const time = Math.floor(Math.random() * (s3 - s1)) + s1;
+      weedRequirements.push({ time, done: false });
+    }
+    weedRequirements.sort((a, b) => a.time - b.time); // 按时间排序
+    
+    const newPlot = { 
+      ...plot, 
+      seedId: sid, 
+      plantedAt: now(), 
+      fertilized: false, 
+      wateredAt: null, 
+      weeds: false, 
+      pests: false,
+      waterRequirements,
+      weedRequirements,
+      pausedDuration: 0,
+      pausedAt: null
+    };
+    const inv = { ...save.inventory, [sid]: (save.inventory[sid] || 0) - 1 };
+    setSave((s) => ({ ...s, plots: replacePlot(s.plots, newPlot), inventory: inv }));
+  }
+
+  function harvest(plot) {
+    if (!plot.unlocked) return;
+    if (!plot.seedId) return;
+    const st = stageOf(plot);
+    if (st !== STAGE.RIPE) return toast("尚未成熟");
+    const amount = yieldAmount(plot);
+    const seed = SEEDS[plot.seedId];
+    const exp = seed.exp * amount; // 经验值 = 基础经验 × 收获数量
+    const cleared = { 
+      ...plot, 
+      seedId: null, 
+      plantedAt: null, 
+      fertilized: false, 
+      weeds: false, 
+      pests: false, 
+      waterRequirements: [],
+      weedRequirements: [],
+      pausedDuration: 0,
+      pausedAt: null
+    };
+    setSave((s) => ({
+      ...s,
+      exp: s.exp + exp,
+      plots: replacePlot(s.plots, cleared),
+      fruits: { ...(s.fruits || {}), [plot.seedId]: ((s.fruits || {})[plot.seedId] || 0) + amount }
+    }));
+    toast(`收获 ${seed.name} ×${amount}，经验 +${exp}，可在商店出售获得金币`);
+  }
+
+  function water(plot) {
+    if (!plot.unlocked) return;
+    if (!plot.seedId) return;
+    const actualElapsed = (now() - plot.plantedAt) - (plot.pausedDuration || 0);
+    let next = { ...plot, wateredAt: now() };
+    let completedAny = false;
+    
+    // 检查并完成已到达的浇水需求
+    const waterReqs = [...(plot.waterRequirements || [])];
+    for (let i = 0; i < waterReqs.length; i++) {
+      if (!waterReqs[i].done && actualElapsed >= waterReqs[i].time) {
+        waterReqs[i] = { ...waterReqs[i], done: true };
+        completedAny = true;
+      }
+    }
+    
+    if (completedAny) {
+      next = { 
+        ...next, 
+        waterRequirements: waterReqs,
+        pausedAt: null  // 清除暂停（如果所有需求都完成了会在下次tick处理）
+      };
+      toast("已满足浇水需求");
+    }
+    
+    setSave((s) => ({ ...s, plots: replacePlot(s.plots, next) }));
+  }
+  function weed(plot) {
+    if (!plot.unlocked) return;
+    if (!plot.seedId) return;
+    const actualElapsed = (now() - plot.plantedAt) - (plot.pausedDuration || 0);
+    let completedAny = false;
+    
+    // 检查并完成已到达的除草需求
+    const weedReqs = [...(plot.weedRequirements || [])];
+    for (let i = 0; i < weedReqs.length; i++) {
+      if (!weedReqs[i].done && actualElapsed >= weedReqs[i].time) {
+        weedReqs[i] = { ...weedReqs[i], done: true };
+        completedAny = true;
+      }
+    }
+    
+    if (completedAny) {
+      const next = { 
+        ...plot, 
+        weedRequirements: weedReqs,
+        weeds: false,  // 也清除杂草状态
+        pausedAt: null  // 清除暂停
+      };
+      setSave((s) => ({ ...s, plots: replacePlot(s.plots, next) }));
+      toast("已满足除草需求");
+    } else if (plot.weeds) {
+      // 处理随机出现的杂草（不影响需求）
+      setSave((s) => ({ ...s, plots: replacePlot(s.plots, { ...plot, weeds: false }) }));
+    } else {
+      toast("没有杂草");
+    }
+  }
+  function pesticide(plot) { if (!plot.unlocked) return; if (!plot.seedId) return; if (!plot.pests) return toast("没有害虫"); setSave((s) => ({ ...s, plots: replacePlot(s.plots, { ...plot, pests: false }) })); }
+  function shovel(plot) {
+    if (!plot.unlocked) return; 
+    if (!plot.seedId) return; 
+    const cleared = { 
+      ...plot, 
+      seedId: null, 
+      plantedAt: null, 
+      fertilized: false, 
+      weeds: false, 
+      pests: false, 
+      waterRequirements: [],
+      weedRequirements: [],
+      pausedDuration: 0,
+      pausedAt: null
+    }; 
+    setSave((s) => ({ ...s, plots: replacePlot(s.plots, cleared) })); 
+  }
+  // 保护农场（30分钟）
+  function protectFarm() {
+    const durationSec = 1800; // 30分钟
+    const today = getTodayDateStr();
+    
+    // 检查是否需要重置每日计数（新的一天）
+    const needReset = save.protectLastDate !== today;
+    const protectFreeUsed = needReset ? false : (save.protectFreeUsed || false);
+    const protectBoughtToday = needReset ? 0 : (save.protectBoughtToday || 0);
+    
+    // 如果有免费次数，使用免费保护
+    if (!protectFreeUsed) {
+      setSave((s) => ({
+        ...s,
+        plots: s.plots.map((p) => ({ ...p, protectedUntil: now() + durationSec })),
+        protectFreeUsed: true,
+        protectLastDate: today
+      }));
+      toast("已使用免费保护，持续30分钟");
+      return;
+    }
+    
+    // 如果没有免费次数，检查购买次数
+    if (protectBoughtToday >= 3) {
+      return toast("今日购买保护次数已达上限（3次）");
+    }
+    
+    const cost = 100;
+    if (save.coins < cost) return toast("金币不足，需要100金币");
+    
+    setSave((s) => ({
+      ...s,
+      coins: s.coins - cost,
+      plots: s.plots.map((p) => ({ ...p, protectedUntil: now() + durationSec })),
+      protectBoughtToday: protectBoughtToday + 1,
+      protectLastDate: today
+    }));
+    toast(`已购买保护，持续30分钟（今日剩余购买次数：${2 - protectBoughtToday}）`);
+  }
+  
+  // 开垦土地
+  function unlockPlot(plot) {
+    if (plot.unlocked) return toast("土地已解锁");
+    const cost = getPlotUnlockCost(plot.id);
+    const requiredLevel = getPlotUnlockLevel(plot.id);
+    const currentLevel = getLevel(save.exp);
+    
+    if (currentLevel < requiredLevel) return toast(`等级不足，需要等级 ${requiredLevel}（当前 ${currentLevel} 级）`);
+    if (save.coins < cost) return toast(`金币不足，需要 ${cost} 金币`);
+    
+    setSave((s) => ({
+      ...s,
+      coins: s.coins - cost,
+      plots: replacePlot(s.plots, { ...plot, unlocked: true })
+    }));
+    toast(`成功开垦土地 #${plot.id + 1}，消耗 ${cost} 金币`);
+  }
+
+  // 重置（恢复到默认配置）
+  function resetSave() {
+    if (!confirm("确定要清空存档并重置为默认配置吗？")) return;
+    const resetData = { ...DEFAULT_SAVE };
+    localStorage.setItem("social-farm-save-v1", JSON.stringify(resetData));
+    setSave(resetData);
+    toast("已清空存档并重置为默认配置");
+  }
+
+  // 弹窗：商店 / 银行 / Gluck
+  const [shopOpen, setShopOpen] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
+  const [gluckOpen, setGluckOpen] = useState(false);
+
+  /**********************
+   * 渲染                *
+   **********************/
+  return (
+    <div className="min-h-screen relative text-slate-800 font-sans">
+      <AutumnBackground />
+      <div className="relative z-10" style={{ cursor: cursorForTool(save.tool) }}>
+        <TopBar coins={save.coins} zeta={save.zeta} tickets={save.tickets} exp={save.exp} level={lvl} onProtect={protectFarm} />
+        <div className="max-w-6xl mx-auto px-3 pb-24">
+          <div className="grid md:grid-cols-12 gap-3 mt-3">
+            <div className="md:col-span-9">
+              <Board
+                plots={save.plots}
+                onPlotClick={(p) => {
+                  if (!p.unlocked) return unlockPlot(p);
+                  switch (save.tool) {
+                    case "plant": plant(p); break;
+                    case "harvest": harvest(p); break;
+                    case "water": water(p); break;
+                    case "weed": weed(p); break;
+                    case "pesticide": pesticide(p); break;
+                    case "shovel": shovel(p); break;
+                    default: break;
+                  }
+                }}
+                onHarvest={harvest}
+                onShovel={shovel}
+                onUnlock={unlockPlot}
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Toolbox current={save.tool} setTool={setTool} />
+              <BagPanel inventory={save.inventory} fruits={save.fruits || {}} selected={save.selectedSeed} onSelect={selectSeed} />
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                <button className="w-full text-sm px-3 py-2 rounded-xl border bg-white/90 backdrop-blur hover:bg-white" onClick={() => setShopOpen(true)}>🛒 商店</button>
+                <button className="w-full text-sm px-3 py-2 rounded-xl border bg-white/90 backdrop-blur hover:bg-white" onClick={() => setBankOpen(true)}>🏦 银行</button>
+                <button className="w-full text-sm px-3 py-2 rounded-xl border bg-white/90 backdrop-blur hover:bg-white" onClick={() => setGluckOpen(true)}>🎰 Gluck</button>
+              </div>
+              <SettingsPanel onReset={resetSave} />
+            </div>
+          </div>
+        </div>
+        <ShopModal 
+          open={shopOpen} 
+          onClose={() => setShopOpen(false)} 
+          buySeed={buySeed} 
+          sellFruit={(id, count) => {
+            const seed = SEEDS[id];
+            if (!seed) return toast("未知作物");
+            const fruits = save.fruits || {};
+            const available = fruits[id] || 0;
+            if (available < count) return toast("果实不足");
+            
+            // 商店只能卖成金币
+            const income = seed.sell * count;
+            setSave((s) => ({
+              ...s,
+              coins: s.coins + income,
+              fruits: { ...s.fruits, [id]: (s.fruits[id] || 0) - count }
+            }));
+            toast(`出售 ${seed.name} ×${count}，获得 ${income} 金币`);
+          }} 
+          fruits={save.fruits || {}} 
+        />
+        <BankModal 
+          open={bankOpen} 
+          onClose={() => setBankOpen(false)} 
+          coins={save.coins}
+          onExchange={(amount, targetCurrency) => {
+            // ZETA汇率 1:10（10金币 = 1 ZETA），奖券汇率 1:50（50金币 = 1 奖券）
+            if (save.coins < amount) return toast("金币不足");
+            const exchangeRate = targetCurrency === 'zeta' ? 10 : 50;
+            const exchangeAmount = Math.floor(amount / exchangeRate);
+            const minAmount = targetCurrency === 'zeta' ? 10 : 50;
+            if (exchangeAmount < 1) return toast(`兑换数量至少需要${minAmount}金币`);
+            
+            setSave((s) => ({
+              ...s,
+              coins: s.coins - amount,
+              [targetCurrency]: (s[targetCurrency] || 0) + exchangeAmount
+            }));
+            
+            const currencyName = targetCurrency === 'zeta' ? 'ZETA' : '奖券';
+            toast(`兑换成功：${amount} 金币 → ${exchangeAmount} ${currencyName}`);
+          }}
+        />
+        <GluckModal open={gluckOpen} onClose={() => setGluckOpen(false)} onDraw={(n)=>doGluck(n)} tickets={save.tickets} />
+        <ToastArea />
+      </div>
+    </div>
+  );
+
+  // ====== Gluck 逻辑 ======
+  function doGluck(count = 1) {
+    const cost = count; // 每抽 1 张奖券
+    if (save.tickets < cost) return toast("奖券不足");
+
+    // 种子包概率分布（按等级分组，累计概率）
+    const seedPools = [
+      // 低级种子（1-2级）：35%概率，数量3-5个
+      { seeds: ['radish', 'strawberry'], prob: 0.35, minQty: 3, maxQty: 5 },
+      // 低级种子（3-4级）：20%概率，数量1-3个
+      { seeds: ['corn', 'grape'], prob: 0.55, minQty: 1, maxQty: 3 },
+      // 中级种子（5-6级）：15%概率，数量1-2个
+      { seeds: ['tomato', 'blueberry'], prob: 0.70, minQty: 1, maxQty: 2 },
+      // 中级种子（7-8级）：12%概率，数量1-2个
+      { seeds: ['pumpkin', 'pineapple'], prob: 0.82, minQty: 1, maxQty: 2 },
+      // 高级种子（9-10级）：5%概率，数量1-2个
+      { seeds: ['coffee', 'cocoa'], prob: 0.87, minQty: 1, maxQty: 2 },
+      // 高级种子（11-12级）：3%概率，数量1-2个
+      { seeds: ['tea', 'chili'], prob: 0.90, minQty: 1, maxQty: 2 },
+      // 顶级种子（13-14级）：0.005%概率，数量1个
+      { seeds: ['rice', 'wheat'], prob: 0.90005, minQty: 1, maxQty: 1 },
+      // 顶级种子（15-16级）：0.003%概率，数量1个
+      { seeds: ['peach', 'pear'], prob: 0.90008, minQty: 1, maxQty: 1 },
+      // 稀有种子（17-18级）：0.001%概率，数量1个
+      { seeds: ['mango', 'cherry'], prob: 0.90009, minQty: 1, maxQty: 1 },
+    ];
+
+    const rewards = [];
+    for (let i = 0; i < count; i++) {
+      const r = Math.random();
+      
+      // 根据随机数选择种子池
+      let selectedPool = null;
+      for (const pool of seedPools) {
+        if (r <= pool.prob) {
+          selectedPool = pool;
+          break;
+        }
+      }
+      
+      if (selectedPool) {
+        // 从该池中随机选择一个种子
+        const seedId = selectedPool.seeds[Math.floor(Math.random() * selectedPool.seeds.length)];
+        // 随机数量
+        const qty = selectedPool.minQty + Math.floor(Math.random() * (selectedPool.maxQty - selectedPool.minQty + 1));
+        rewards.push({ type: 'seed', id: seedId, qty });
+      }
+    }
+
+    // 应用奖励
+    setSave((s) => {
+      const next = { ...s, tickets: s.tickets - cost, inventory: { ...(s.inventory || {}) } };
+      const seedGains = [];
+      rewards.forEach((rw) => {
+        if (rw.type === 'seed') {
+          next.inventory[rw.id] = (next.inventory[rw.id] || 0) + rw.qty;
+          seedGains.push(`${SEEDS[rw.id].emoji} ${SEEDS[rw.id].name}×${rw.qty}`);
+        }
+      });
+      
+      // 汇总提示
+      if (seedGains.length > 0) {
+        toast(`抽到：${seedGains.join('、')}`);
+      } else {
+        toast('下次必出好运！');
+      }
+      return next;
+    });
+  }
+}
+
+/**********************
+ * 子组件              *
+ **********************/
+function TopBar({ coins, zeta, tickets, exp, level, onProtect }) {
+  const nextLvl = clamp(level, 1, LEVELS.length);
+  const curNeed = LEVELS[nextLvl - 1] ?? 0;
+  const nextNeed = LEVELS[nextLvl] ?? LEVELS[LEVELS.length - 1];
+  const prog = LEVELS[nextLvl] ? clamp((exp - curNeed) / (nextNeed - curNeed), 0, 1) : 1;
+  
+  // 计算升级所需经验
+  const expNeeded = nextNeed > exp ? nextNeed - exp : 0;
+  const isMaxLevel = level >= LEVELS.length;
+  
+  return (
+    <div className="bg-white/80 backdrop-blur sticky top-0 z-50 shadow-sm border-b border-amber-200/50">
+      <div className="max-w-6xl mx-auto px-3 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="text-2xl font-serif">ZETA Farm</div>
+          <div className="text-sm text-slate-500 hidden md:block">切换语言</div>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="px-2 sm:px-3 py-1 rounded-full bg-amber-100 border border-amber-200/80">💰 <b>{coins}</b></div>
+          <div className="px-2 sm:px-3 py-1 rounded-full bg-cyan-100 border border-cyan-200/80">Ζ <b>{zeta}</b></div>
+          <div className="px-2 sm:px-3 py-1 rounded-full bg-pink-100 border border-pink-200/80">🎟️ <b>{tickets}</b></div>
+          <div className="px-2 sm:px-3 py-1 rounded-full bg-indigo-100 border border-indigo-200/80">⭐ <b>{exp}</b></div>
+          <div className="relative group">
+            <div className="px-2 sm:px-3 py-1 rounded-full bg-emerald-100 border border-emerald-200/80">🎖️ 等级<b>{level}</b></div>
+            {!isMaxLevel && (
+              <div className="pointer-events-none absolute z-10 hidden group-hover:block right-0 mt-2 w-48 p-2 rounded-lg border bg-white shadow-lg text-center">
+                <div className="text-sm text-slate-700">升级到等级 {level + 1}</div>
+                <div className="text-xs text-slate-500 mt-1">需要经验：<b>{expNeeded}</b></div>
+              </div>
+            )}
+          </div>
+          <button className="px-3 py-1 rounded-full bg-rose-100 border border-rose-200/80 hover:bg-rose-200" onClick={onProtect}>🛡️ 保护 30 分钟</button>
+        </div>
+      </div>
+      <div className="h-1 bg-amber-200/40">
+        <div className="h-full bg-emerald-500" style={{ width: `${prog * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function Board({ plots, onPlotClick, onHarvest, onShovel, onUnlock }) {
+  return (
+    <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+      {plots.map((p) => (
+        <PlotTile key={p.id} plot={p} onClick={() => onPlotClick(p)} onHarvest={onHarvest} onShovel={onShovel} onUnlock={onUnlock} />
+      ))}
+    </div>
+  );
+}
+
+function PlotTile({ plot, onClick, onHarvest, onShovel, onUnlock }) {
+  const st = stageOf(plot);
+  const seed = plot.seedId ? SEEDS[plot.seedId] : null;
+  const timeNext = timeToNextStage(plot);
+  const isProtected = (plot.protectedUntil || 0) > now();
+  
+  // 如果未解锁，显示开垦界面
+  if (!plot.unlocked) {
+    const unlockCost = getPlotUnlockCost(plot.id);
+    const requiredLevel = getPlotUnlockLevel(plot.id);
+    return (
+      <div className="relative select-none p-2 rounded-3xl border shadow-sm bg-gray-100/50 opacity-60">
+        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+          <span>#{plot.id + 1}</span>
+          <span className="text-slate-400">🔒 未开垦</span>
+        </div>
+        <div className="flex flex-col items-center py-6 h-32 justify-center">
+          <div className="text-3xl opacity-50">🔒</div>
+          <div className="text-sm mt-2 font-medium text-slate-600">荒地</div>
+          <div className="text-[10px] mt-1 text-slate-500">需要等级 {requiredLevel}</div>
+        </div>
+        <button 
+          className="w-full mt-2 text-sm py-1.5 rounded-2xl border bg-white/90 hover:bg-white text-slate-700" 
+          onClick={(e) => { e.stopPropagation(); if (onUnlock) onUnlock(plot); }}
+        >
+          💰 {unlockCost} 金币
+        </button>
+      </div>
+    );
+  }
+  
+  // 计算实际生长时间，检查是否有未完成的浇水/除草需求
+  // 使用state强制重新渲染以实时更新显示
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRefreshKey(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+  
+  const actualElapsed = plot.seedId && plot.plantedAt 
+    ? (now() - plot.plantedAt) - (plot.pausedDuration || 0) 
+    : 0;
+  const hasActiveWaterReq = (plot.waterRequirements || []).some(r => !r.done && actualElapsed >= r.time);
+  const hasActiveWeedReq = (plot.weedRequirements || []).some(r => !r.done && actualElapsed >= r.time);
+
+  const labelByStage = { EMPTY: "空地", SEED: "播种中", SPROUT: "发芽", GROWING: "生长", RIPE: "成熟", WITHER: "枯萎" };
+  const stageEmoji = { EMPTY: "⬜", SEED: "🌱", SPROUT: "🌿", GROWING: "🌾", RIPE: seed?.emoji ?? "🍀", WITHER: "🪦" };
+  
+  // 处理按钮点击
+  const handleButtonClick = (e) => {
+    e.stopPropagation(); // 阻止事件冒泡到地块点击
+    if (st === STAGE.RIPE && onHarvest) {
+      onHarvest(plot);
+    } else if (st === STAGE.WITHER && onShovel) {
+      onShovel(plot);
+    } else {
+      onClick();
+    }
+  };
+
+  return (
+    <div onClick={onClick} className="relative select-none p-2 rounded-3xl border shadow-sm hover:shadow transition" style={soilTextureStyle()}>
+      <div className="flex items-center justify-between text-xs text-amber-900/85">
+        <span>#{plot.id + 1}</span>
+        {isProtected && <span className="text-white">🛡️保护</span>}
+      </div>
+      <div className="flex flex-col items-center py-3 h-32 justify-center relative">
+        <div className="text-4xl">{st === STAGE.RIPE && seed ? seed.emoji : stageEmoji[st]}</div>
+        <div className="text-sm mt-1 font-medium text-amber-950">{seed ? seed.name : "空地"}</div>
+        <div className="text-xs text-amber-900/70 h-4">{seed ? labelByStage[st] : ""}</div>
+        {seed && st === STAGE.RIPE && (
+          <div className="text-[11px] text-amber-900/60 mt-1">距枯萎：{fmtTime(timeNext)}</div>
+        )}
+      </div>
+      {(plot.weeds || plot.pests || hasActiveWaterReq || hasActiveWeedReq) && (
+        <div className="absolute bottom-12 left-0 right-0 flex gap-1 justify-center pointer-events-none z-20">
+          {hasActiveWaterReq && <Badge text="💧需水" color="bg-sky-700" />}
+          {hasActiveWeedReq && <Badge text="🌿需除草" color="bg-lime-700" />}
+          {plot.weeds && !hasActiveWeedReq && <Badge text="🌿杂草" color="bg-lime-700" />}
+          {plot.pests && <Badge text="🐛害虫" color="bg-yellow-700" />}
+        </div>
+      )}
+      <div className="relative w-full mt-2">
+        <button className="w-full text-sm py-1.5 rounded-2xl border bg-white/90 hover:bg-white relative overflow-hidden" onClick={onClick}>
+          {seed && st !== STAGE.WITHER && st !== STAGE.EMPTY && st !== STAGE.RIPE && (
+            <div className="absolute inset-0 bg-green-100/30 rounded-2xl">
+              <div 
+                className="absolute inset-0 bg-green-400/40 rounded-2xl transition-all" 
+                style={{ width: `${(() => {
+                  const elapsed = (now() - plot.plantedAt) - (plot.pausedDuration || 0);
+                  const [s1, s2, s3] = seed.stages;
+                  if (st === STAGE.SEED) {
+                    return Math.max(0, Math.min(100, (elapsed / s1) * 100));
+                  } else if (st === STAGE.SPROUT) {
+                    return Math.max(0, Math.min(100, ((elapsed - s1) / (s2 - s1)) * 100));
+                  } else if (st === STAGE.GROWING) {
+                    return Math.max(0, Math.min(100, ((elapsed - s2) / (s3 - s2)) * 100));
+                  }
+                  return 0;
+                })()}%` }}
+              />
+            </div>
+          )}
+          <span className="relative z-10">
+            {(() => {
+              if (st === STAGE.EMPTY) return "💤 无事可做";
+              if (st === STAGE.RIPE) return "🧺 收获";
+              if (st === STAGE.WITHER) return "🪓 铲除";
+              return `${fmtTime(timeNext)}`;
+            })()}
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Badge({ text, color }) { return (<div className={`text-[10px] text-white px-1.5 py-0.5 rounded ${color}`}>{text}</div>); }
+
+function Toolbox({ current, setTool }) {
+  const tools = [
+    { id: "harvest", label: "收获", emoji: "🧺" },
+    { id: "plant", label: "播种", emoji: "🌱" },
+    { id: "water", label: "浇水", emoji: "💧" },
+    { id: "weed", label: "除草", emoji: "🌿" },
+    { id: "pesticide", label: "除虫", emoji: "🪲" },
+    { id: "shovel", label: "铲除", emoji: "🪓" },
+  ];
+  return (
+    <div className="bg-white/90 backdrop-blur rounded-2xl p-3 border shadow-sm">
+      <div className="font-semibold mb-2">工具箱</div>
+      <div className="grid grid-cols-6 gap-2">
+        {tools.map((t) => (
+          <div key={t.id} className="relative group">
+            <button onClick={() => setTool(t.id)} className={`w-full aspect-square rounded-xl border flex items-center justify-center text-2xl ${current === t.id ? 'border-emerald-400 bg-emerald-50' : 'bg-white hover:bg-slate-50'}`} title={t.label}>
+              {t.emoji}
+            </button>
+            <div className="pointer-events-none absolute z-10 hidden group-hover:block left-1/2 -translate-x-1/2 mt-1 w-28 p-1.5 rounded-lg border bg-white shadow text-center">
+              <div className="text-xs text-slate-700">{t.emoji} {t.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="text-[11px] text-slate-500 mt-2">提示：点击格子选择工具，鼠标形态会变化；然后点击地块执行操作。</div>
+    </div>
+  );
+}
+
+function BagPanel({ inventory, fruits, selected, onSelect }) {
+  const entries = Object.values(SEEDS);
+  
+  return (
+    <div className="bg-white/90 backdrop-blur rounded-2xl p-3 border shadow-sm mt-3">
+      <div className="font-semibold mb-2">背包</div>
+      {/* 种子区域 */}
+      <div className="mb-3">
+        <div className="text-xs text-slate-500 mb-1">🌱 种子</div>
+        <div className="grid grid-cols-6 gap-2">
+          {entries.map((s) => {
+            const count = inventory[s.id] ?? 0;
+            const hasCount = count > 0;
+            return (
+              <div key={s.id} className="relative group">
+                <button
+                  onClick={() => hasCount && onSelect(s.id)}
+                  disabled={!hasCount}
+                  className={`w-full aspect-square rounded-xl border flex items-center justify-center text-2xl relative overflow-hidden ${
+                    !hasCount 
+                      ? 'bg-gray-100 opacity-50 border-gray-200 cursor-not-allowed' 
+                      : selected === s.id 
+                        ? 'border-emerald-400 bg-emerald-50' 
+                        : 'bg-white hover:bg-slate-50'
+                  }`}
+                  title={`${s.name}`}
+                >
+                  {hasCount && <div className="absolute inset-0 bg-amber-900/20 pointer-events-none" />}
+                  <span className={`relative z-10 ${!hasCount ? 'opacity-40' : ''}`}>{s.emoji}</span>
+                  {count > 0 && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1/5 bg-amber-800/80 flex items-center justify-center rounded-b-xl pointer-events-none z-20">
+                      <span className="text-[7px] font-bold text-white">{count}</span>
+                    </div>
+                  )}
+                </button>
+                {/* 悬浮说明 */}
+                <div className="pointer-events-none absolute z-10 hidden group-hover:block left-1/2 -translate-x-1/2 mt-1 w-44 p-2 rounded-lg border bg-white shadow">
+                  <div className="text-sm font-medium">{s.name} <span className="text-xs text-slate-400">Lv{s.levelReq}</span></div>
+                  <div className="text-xs text-slate-600">成本 {s.cost}｜售出 {s.sell}｜经验 +{s.exp}</div>
+                  <div className="text-[11px] text-slate-500">成熟约 {fmtTime(s.stages[2])}，枯萎 {fmtTime(s.witherAfter)} 后</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {/* 果实区域 */}
+      <div>
+        <div className="text-xs text-slate-500 mb-1">🍎 果实</div>
+        <div className="grid grid-cols-6 gap-2">
+          {entries.map((s) => {
+            const count = fruits[s.id] ?? 0;
+            const hasCount = count > 0;
+            return (
+              <div key={s.id} className="relative group">
+                <div
+                  className={`w-full aspect-square rounded-xl border flex items-center justify-center text-2xl relative ${
+                    !hasCount 
+                      ? 'bg-gray-100 opacity-50 border-gray-200' 
+                      : 'bg-white'
+                  }`}
+                  title={`${s.name}`}
+                >
+                  <span className={!hasCount ? 'opacity-40' : ''}>{s.emoji}</span>
+                  {count > 0 && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1/5 bg-amber-800/80 flex items-center justify-center rounded-b-xl pointer-events-none z-20">
+                      <span className="text-[7px] font-bold text-white">{count}</span>
+                    </div>
+                  )}
+                </div>
+                {/* 悬浮说明 */}
+                {hasCount && (
+                  <div className="pointer-events-none absolute z-10 hidden group-hover:block left-1/2 -translate-x-1/2 mt-1 w-44 p-2 rounded-lg border bg-white shadow">
+                    <div className="text-sm font-medium">{s.name}</div>
+                    <div className="text-xs text-slate-600">售出单价 {s.sell} 金币</div>
+                    <div className="text-[11px] text-slate-500">可在商店出售</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShopModal({ open, onClose, buySeed, sellFruit, fruits }) {
+  const [tab, setTab] = useState('buy'); // 'buy' or 'sell'
+  const [seedId, setSeedId] = useState('radish');
+  const [qty, setQty] = useState(1);
+  const entries = Object.values(SEEDS);
+  if (!open) return null;
+  const seed = SEEDS[seedId];
+  const fruitEntries = entries.filter(s => (fruits[s.id] || 0) > 0);
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white w-[min(640px,95vw)] rounded-2xl border shadow-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold text-lg">🛒 商店</div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✖</button>
+        </div>
+        {/* 标签页切换 */}
+        <div className="flex gap-2 mb-3 border-b">
+          <button onClick={() => { setTab('buy'); setSeedId('radish'); }} className={`px-3 py-1 text-sm ${tab === 'buy' ? 'border-b-2 border-emerald-400 text-emerald-600' : 'text-slate-500'}`}>
+            🌱 购买种子
+          </button>
+          <button onClick={() => { setTab('sell'); if (fruitEntries.length > 0) setSeedId(fruitEntries[0].id); }} className={`px-3 py-1 text-sm ${tab === 'sell' ? 'border-b-2 border-emerald-400 text-emerald-600' : 'text-slate-500'}`}>
+            🍎 出售果实
+          </button>
+        </div>
+        
+        {tab === 'buy' ? (
+          <div className="grid grid-cols-5 gap-2">
+            <div className="col-span-3">
+              <div className="grid grid-cols-5 gap-2 max-h-72 overflow-auto pr-1">
+                {entries.map((s) => (
+                  <button key={s.id} onClick={() => setSeedId(s.id)} className={`aspect-square rounded-xl border flex items-center justify-center text-2xl ${seedId === s.id ? 'border-emerald-400 bg-emerald-50' : 'bg-white hover:bg-slate-50'}`} title={s.name}>
+                    {s.emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="col-span-2">
+              <div className="text-base font-medium mb-1">{seed.name} <span className="text-xs text-slate-400">Lv{seed.levelReq}</span></div>
+              <div className="text-sm text-slate-600">成本 {seed.cost} 金币｜售出 {seed.sell} 金币｜经验 +{seed.exp}</div>
+              <div className="text-[11px] text-slate-500 mb-2">成熟约 {fmtTime(seed.stages[2])}，枯萎 {fmtTime(seed.witherAfter)} 后</div>
+              <div className="text-sm mb-2 text-slate-700">💰 金币购买</div>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="number" min={1} value={qty} onChange={(e)=>setQty(clamp(parseInt(e.target.value||'1',10),1,999))} className="w-20 px-2 py-1 border rounded-lg" />
+                <div className="text-sm text-slate-600">数量</div>
+                <div className="text-sm text-slate-600">总价：{seed.cost * qty} 金币</div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>buySeed(seedId, qty)} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">购买</button>
+                <button onClick={onClose} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">关闭</button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-5 gap-2">
+            <div className="col-span-3">
+              {fruitEntries.length > 0 ? (
+                <div className="grid grid-cols-5 gap-2 max-h-72 overflow-auto pr-1">
+                  {fruitEntries.map((s) => (
+                    <button key={s.id} onClick={() => setSeedId(s.id)} className={`aspect-square rounded-xl border flex items-center justify-center text-2xl relative ${seedId === s.id ? 'border-emerald-400 bg-emerald-50' : 'bg-white hover:bg-slate-50'}`} title={s.name}>
+                      {s.emoji}
+                      <span className="absolute -top-1 -right-1 text-[10px] px-1 rounded bg-emerald-600 text-white">{fruits[s.id] || 0}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-400">暂无果实可出售</div>
+              )}
+            </div>
+            <div className="col-span-2">
+              {fruitEntries.length > 0 && seed ? (
+                <>
+                  <div className="text-base font-medium mb-1">{seed.name}</div>
+                  <div className="text-sm text-slate-600 mb-2">单价 {seed.sell} 金币</div>
+                  <div className="text-sm text-slate-500 mb-2">持有：{fruits[seed.id] || 0} 个</div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input type="number" min={1} max={fruits[seed.id] || 0} value={qty} onChange={(e)=>setQty(clamp(parseInt(e.target.value||'1',10),1,fruits[seed.id] || 0))} className="w-20 px-2 py-1 border rounded-lg" />
+                    <div className="text-sm text-slate-600">数量</div>
+                  </div>
+                  <div className="text-sm text-slate-700 mb-2">总计：{seed.sell * qty} 金币</div>
+                  <div className="text-[11px] text-slate-500 mb-2">💰 商店仅支持出售为金币</div>
+                  <div className="flex gap-2">
+                    <button onClick={()=>{sellFruit(seedId, qty); setQty(1);}} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">出售</button>
+                    <button onClick={onClose} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">关闭</button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-slate-400">请选择要出售的果实</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BankModal({ open, onClose, coins, onExchange }) {
+  const [amount, setAmount] = useState(10);
+  const [targetCurrency, setTargetCurrency] = useState('zeta');
+  if (!open) return null;
+  
+  // ZETA汇率10:1，奖券汇率50:1
+  const exchangeRate = targetCurrency === 'zeta' ? 10 : 50;
+  const minAmount = targetCurrency === 'zeta' ? 10 : 50;
+  // 确保金额不小于最小金额
+  const validAmount = Math.max(amount, minAmount);
+  const exchangeAmount = Math.floor(validAmount / exchangeRate);
+  
+  // 当切换货币时，调整金额
+  const handleCurrencyChange = (currency) => {
+    setTargetCurrency(currency);
+    const newMin = currency === 'zeta' ? 10 : 50;
+    if (amount < newMin) {
+      setAmount(newMin);
+    }
+  };
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white w-[min(480px,95vw)] rounded-2xl border shadow-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold text-lg">🏦 银行</div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✖</button>
+        </div>
+        <div className="text-sm text-slate-600 mb-3">当前持有金币：<b>{coins}</b></div>
+        <div className="mb-3">
+          <div className="text-sm text-slate-700 mb-2">兑换目标：</div>
+          <div className="flex gap-2 mb-2">
+            <button 
+              onClick={() => handleCurrencyChange('zeta')} 
+              className={`px-3 py-2 rounded-lg border flex-1 ${targetCurrency==='zeta'?'bg-emerald-100 border-emerald-300':'bg-white hover:bg-slate-50'}`}
+            >
+              Ζ ZETA
+            </button>
+            <button 
+              onClick={() => handleCurrencyChange('tickets')} 
+              className={`px-3 py-2 rounded-lg border flex-1 ${targetCurrency==='tickets'?'bg-emerald-100 border-emerald-300':'bg-white hover:bg-slate-50'}`}
+            >
+              🎟️ 奖券
+            </button>
+          </div>
+        </div>
+        <div className="mb-3">
+          <div className="text-sm text-slate-700 mb-2">兑换金额（金币）：</div>
+          <div className="flex items-center gap-2 mb-2">
+            <input 
+              type="number" 
+              min={minAmount} 
+              max={coins}
+              step={targetCurrency === 'zeta' ? 10 : 50}
+              value={validAmount} 
+              onChange={(e)=>setAmount(clamp(parseInt(e.target.value||minAmount,10),minAmount,coins))}
+              className="flex-1 px-3 py-2 border rounded-lg" 
+            />
+          </div>
+          <div className="flex gap-2 mb-2">
+            {targetCurrency === 'zeta' ? (
+              <>
+                <button onClick={() => setAmount(10)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">10</button>
+                <button onClick={() => setAmount(100)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">100</button>
+                <button onClick={() => setAmount(1000)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">1000</button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => setAmount(50)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">50</button>
+                <button onClick={() => setAmount(250)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">250</button>
+                <button onClick={() => setAmount(500)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">500</button>
+              </>
+            )}
+            <button onClick={() => setAmount(coins)} className="px-2 py-1 text-xs rounded border bg-white hover:bg-slate-50">全部</button>
+          </div>
+        </div>
+        <div className="text-sm text-slate-700 mb-3 p-3 bg-slate-50 rounded-lg">
+          <div>{exchangeRate} 金币 = 1 {targetCurrency === 'zeta' ? 'ZETA' : '奖券'}</div>
+          <div className="font-semibold mt-1">
+            {validAmount} 金币 → {exchangeAmount} {targetCurrency === 'zeta' ? 'ZETA' : '奖券'}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={()=>{
+              if (coins < validAmount) {
+                toast("金币不足");
+                return;
+              }
+              if (exchangeAmount < 1) {
+                toast(`兑换数量至少需要${minAmount}金币`);
+                return;
+              }
+              onExchange(validAmount, targetCurrency);
+              setAmount(minAmount);
+            }} 
+            className="flex-1 px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50"
+            disabled={coins < validAmount || exchangeAmount < 1}
+          >
+            兑换
+          </button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">关闭</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GluckModal({ open, onClose, onDraw, tickets }) {
+  const [count, setCount] = useState(1);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white w-[min(560px,95vw)] rounded-2xl border shadow-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold text-lg">🎰 Gluck 抽奖</div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✖</button>
+        </div>
+        <div className="text-sm text-slate-600 mb-3">消耗 <b>奖券</b> 进行抽奖。每次消耗 1 张，当前持有：<b>{tickets}</b></div>
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={() => setCount(1)} className={`px-3 py-1 rounded-lg border ${count===1?'bg-emerald-100 border-emerald-300':'bg-white hover:bg-slate-50'}`}>单抽</button>
+          <button onClick={() => setCount(10)} className={`px-3 py-1 rounded-lg border ${count===10?'bg-emerald-100 border-emerald-300':'bg-white hover:bg-slate-50'}`}>十连</button>
+          <input type="number" min={1} value={count} onChange={(e)=>setCount(clamp(parseInt(e.target.value||'1',10),1,999))} className="w-24 px-2 py-1 border rounded-lg" />
+        </div>
+        <div className="flex gap-2">
+          <button onClick={()=>onDraw(count)} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">开始抽奖</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50">关闭</button>
+        </div>
+        <div className="text-[11px] text-slate-500 mt-2">
+
+          <div className="space-y-0.5">
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({ onReset }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-white/90 backdrop-blur rounded-2xl p-3 border shadow-sm mt-3">
+      <div className="flex items-center justify-between">
+        <div className="font-semibold">设置</div>
+        <button onClick={() => setOpen(!open)} className="text-xs px-2 py-1 rounded-lg border bg-white hover:bg-slate-50">{open ? "收起" : "展开"}</button>
+      </div>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <button onClick={onReset} className="text-xs px-2 py-1 rounded-lg border bg-white hover:bg-slate-50">⚠️ 清空存档（测试配置）</button>
+          <div className="text-[11px] text-slate-500">本 Demo 使用 localStorage；生产可替换为后端存档与社交系统。</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// === 动态秋景背景 ===
+function AutumnBackground() {
+  // 使用内联 style 注入关键帧，避免外部依赖
+  return (
+    <div className="absolute inset-0 -z-10 overflow-hidden">
+      <style>{`
+        @keyframes cloudMove { 0%{transform:translateX(-20%)} 100%{transform:translateX(120%)} }
+        @keyframes leafFall { 0%{ transform:translateY(-10%) rotate(0deg); opacity:0 } 10%{opacity:1} 100%{ transform:translateY(120%) rotate(360deg); opacity:0 } }
+      `}</style>
+      {/* 天空渐变 */}
+      <div className="absolute inset-0 bg-gradient-to-b from-amber-100 via-amber-50 to-emerald-50" />
+      {/* 远山/田野色带 */}
+      <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-amber-200/60 to-transparent" />
+      {/* 移动云层 */}
+      <div className="absolute top-10 left-0 right-0 h-20 opacity-60" style={{ animation: 'cloudMove 60s linear infinite' }}>
+        <div className="mx-auto max-w-6xl h-full bg-white/40 blur-2xl rounded-full" />
+      </div>
+      {/* 飘落树叶（几层不同时长） */}
+      {Array.from({length: 12}).map((_,i)=> (
+        <div key={i} className="absolute text-2xl" style={{ left: `${Math.random()*100}%`, animation: `leafFall ${20 + Math.random()*15}s linear ${Math.random()*5}s infinite` }}>
+          {['🍂','🍁','🍃'][i%3]}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**********************
+ * 轻量 Toast 系统     *
+ **********************/
+const toasts = [];
+let toastId = 1;
+const listeners = [];
+function toast(text) {
+  const item = { id: toastId++, text };
+  toasts.push(item);
+  listeners.forEach((l) => l([...toasts]));
+  setTimeout(() => {
+    const idx = toasts.findIndex((t) => t.id === item.id);
+    if (idx >= 0) { toasts.splice(idx, 1); listeners.forEach((l) => l([...toasts])); }
+  }, 2200);
+}
+
+function ToastArea() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const l = (list) => setTick(list.length);
+    listeners.push(l);
+    return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); };
+  }, []);
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 space-y-2">
+      {toasts.map((t) => (
+        <div key={t.id} className="px-3 py-2 rounded-xl bg-slate-900/90 text-white text-sm shadow-lg backdrop-blur">{t.text}</div>
+      ))}
+    </div>
+  );
+}
+
+// ====== dev=1：测试（仅新增，不修改原有） ======
+(function DevTests(){
+  if (typeof window === 'undefined') return;
+  const isDev = new URLSearchParams(window.location.search).get('dev') === '1';
+  if (!isDev) return;
+  try {
+    const results = [];
+    const add = (name, cond, extra="") => { results.push({ name, pass: !!cond, extra }); };
+    add('cursorForTool returns string', typeof cursorForTool('plant') === 'string');
+    const seed = SEEDS.radish; const t0 = 1000; const plantedAt = t0 - (seed.stages[0]-1);
+    const fakePlot = { seedId: 'radish', plantedAt, fertilized:false, weeds:false, pests:false };
+    add('yieldAmount >=1', yieldAmount(fakePlot) >= 1);
+    console.log('[DEV EXTRA TESTS]', results);
+  } catch(e) { console.warn('Dev tests init failed', e); }
+})();
+
+
+      // 挂载应用
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<SocialFarmGame />);
+    </script>
+  </body>
+</html>
